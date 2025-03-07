@@ -2,7 +2,9 @@
   "name": "go-fstrings",
   "displayName": "GO Fstrings",
   "description": "Helper function to create python type fstrings in GO",
-  "version": "0.0.4",
+  "version": "1.0.0",
+  "publisher": "Johnnycyan",
+  "icon": "icon.png",
   "engines": {
     "vscode": "^1.98.0"
   },
@@ -14,7 +16,14 @@
   ],
   "main": "./out/extension.js",
   "contributes": {
-    "commands": []
+    "commands": [],
+    "grammars": [
+      {
+        "injectTo": ["source.go"],
+        "scopeName": "go-fstring-comments.injection",
+        "path": "./syntaxes/go-fstrings.tmLanguage.json"
+      }
+    ]
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

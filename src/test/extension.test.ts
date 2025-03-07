@@ -1,15 +1,36 @@
-import * as assert from 'assert';
+import * as assert from "assert";
+import * as vscode from "vscode";
+import * as path from "path";
+import * as fs from "fs";
+import * as os from "os";
 
-// You can import and use all API from the 'vscode' module
-// as well as import your extension to test it
-import * as vscode from 'vscode';
-// import * as myExtension from '../../extension';
+suite("Extension Test Suite", () => {
+  test("f-string comment conversion test", async () => {
+    // Create a temporary file
+    const tempFile = path.join(os.tmpdir(), "test.go");
+    fs.writeFileSync(
+      tempFile,
+      `package main
 
-suite('Extension Test Suite', () => {
-	vscode.window.showInformationMessage('Start all tests.');
+// fstring message := "Hello {name}, you are {age} years old"
+`
+    );
 
-	test('Sample test', () => {
-		assert.strictEqual(-1, [1, 2, 3].indexOf(5));
-		assert.strictEqual(-1, [1, 2, 3].indexOf(0));
-	});
+    // Open the file in the editor
+    const document = await vscode.workspace.openTextDocument(tempFile);
+    await vscode.window.showTextDocument(document);
+
+    // Wait for the extension to process
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+
+    // Get the updated document content
+    const text = document.getText();
+
+    assert.strictEqual(
+      text.includes(
+        'message := fmt.Sprintf("Hello %s, you are %s years old", name, age)'
+      ),
+      true
+    );
+  });
 });

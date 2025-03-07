@@ -1,23 +1,20 @@
 {
   "name": "go-fstrings",
-  "displayName": "go-fstrings",
-  "description": "",
-  "version": "0.0.1",
+  "displayName": "GO Fstrings",
+  "description": "Helper function to create python type fstrings in GO",
+  "version": "0.0.4",
   "engines": {
     "vscode": "^1.98.0"
   },
   "categories": [
     "Other"
   ],
-  "activationEvents": [],
+  "activationEvents": [
+    "onLanguage:go"
+  ],
   "main": "./out/extension.js",
   "contributes": {
-    "commands": [
-      {
-        "command": "go-fstrings.helloWorld",
-        "title": "Hello World"
-      }
-    ]
+    "commands": []
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",

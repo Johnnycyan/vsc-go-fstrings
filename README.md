@@ -13,20 +13,66 @@ Simply write a comment with the syntax:
 ```go
 // fstring result := "Hello, {name}!"
 ```
-* You can also use `//fs` `//fstring` or `// fs`
 
 And it will automatically be converted to:
 
 ```go
 result := fmt.Sprintf("Hello, %s!", name)
 ```
-* Using `=` in the comment will also use `=` in the output instead of `:=`
 
 The extension also ensures that the `fmt` package is imported when needed.
 
+### Supported Comment Styles
+
+You can use any of the following comment styles:
+* `// fstring`
+* 
+* `// fs`
+* 
+
+### Assignment Types
+
+The extension supports both `:=` and `=` assignment operators:
+
+```go
+// fstring result := "Hello, {name}!"  // Uses :=
+// fstring existingVar = "Value: {value}"  // Uses =
+```
+
+### Type Hints
+
+You can provide formatting type hints using colon syntax:
+
+```go
+// fstring result := "Integer: {number:d}, Float: {price:f}, String: {name:s}"
+```
+
+Supported type hints:
+- `d`: Integer format (`%d`)
+- `f`: Float format (`%f`) 
+- `s`: String format (`%s`)
+- `v`: Default format (`%v`)
+- `t`: Boolean format (`%t`)
+- `x`: Hex format (`%x`)
+- `w`: Wrapped error format (`%w`)
+
+### Smart Type Detection
+
+The extension attempts to automatically detect variable types from your code when no explicit type hint is provided:
+- Variables like `err` or ending with `err`/`error` are treated as error types (`%w`)
+- Numeric, string, boolean and other types are detected based on declarations in your code
+
+### Escaping Braces
+
+You can include literal braces in your strings by escaping them:
+
+```go
+// fstring message := "Use \{variable} to show literal braces"
+```
+
 ## How It Works
 
-- Add a comment starting with `// fstring` `//fs` `//fstring` or `// fs` followed by a variable assignment and string with placeholders in curly braces
+- Add a comment with one of the supported prefixes followed by a variable assignment and string with placeholders in curly braces
 - The extension automatically converts this to a proper Go `fmt.Sprintf` statement on the next line
 - The conversion happens when you open Go files or make changes to them
 
@@ -37,12 +83,19 @@ The extension also ensures that the `fmt` package is imported when needed.
 
 ## Installation
 
+### From VS Code Marketplace
+
+1. Open VS Code
+2. Go to Extensions view (Ctrl+Shift+X)
+3. Search for "Go f-strings"
+4. Click Install
+
 ### From VSIX File
 
 1. Package the extension: `npm install -g @vscode/vsce && vsce package`
 2. Install in VS Code:
    - From Extensions view: Click `...` > `Install from VSIX...`
-   - Or using command line: `code --install-extension go-fstrings-0.0.1.vsix`
+   - Or using command line: `code --install-extension go-fstrings-1.0.4.vsix`
 
 ### From Source
 
@@ -52,4 +105,9 @@ The extension also ensures that the `fmt` package is imported when needed.
 
 ## Known Issues
 
-This is an early version with basic functionality. Complex expressions inside curly braces may not work as expected.
+- Complex expressions inside curly braces may not work as expected
+- Type detection is based on basic pattern matching and may not work for all variable declarations
+
+## License
+
+This extension is licensed under the MIT License.

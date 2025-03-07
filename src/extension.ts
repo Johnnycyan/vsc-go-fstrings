@@ -106,7 +106,10 @@ function handleFstringComment(
     0,
     line.firstNonWhitespaceCharacterIndex
   );
-  const generatedCode = generateSprintfStatement(parsedComment);
+  
+  // Pass document to generateSprintfStatement
+  const generatedCode = generateSprintfStatement(parsedComment, document);
+  
   updateOrInsertGeneratedLine(
     parsedComment,
     generatedCode,
@@ -121,7 +124,7 @@ interface ParsedFstring {
   varName: string;
   assignmentOp: string; // ":=" or "="
   template: string;
-  variables: string[];
+  variables: { name: string, typeHint: string | null }[];
 }
 
 function parseFstringComment(commentText: string): ParsedFstring | null {
@@ -150,12 +153,15 @@ function parseFstringComment(commentText: string): ParsedFstring | null {
   const [, varName, assignmentOp, , template] = match;
 
   // Extract variables inside curly braces
-  const variables: string[] = [];
-  const variableRegex = /{([^{}]+)}/g;
+  const variables: { name: string, typeHint: string | null }[] = [];
+  const variableRegex = /{([^{}:]+)(?::([a-z]))?}/g;
   let varMatch;
 
   while ((varMatch = variableRegex.exec(template)) !== null) {
-    variables.push(varMatch[1].trim());
+    variables.push({
+      name: varMatch[1].trim(),
+      typeHint: varMatch[2] || null // Extract type hint if provided
+    });
   }
 
   return {
@@ -166,14 +172,156 @@ function parseFstringComment(commentText: string): ParsedFstring | null {
   };
 }
 
-function generateSprintfStatement(parsedComment: ParsedFstring): string {
-  // Replace {var} with %s
-  let formatString = parsedComment.template.replace(/{([^{}]+)}/g, "%s");
+// Type detection function
+function determineFormatSpecifier(
+  variable: { name: string; typeHint: string | null },
+  document: vscode.TextDocument
+): string {
+  // First check for explicit type hints
+  if (variable.typeHint) {
+    switch (variable.typeHint) {
+      case 'd': return '%d'; // integer
+      case 'f': return '%f'; // float
+      case 's': return '%s'; // string
+      case 'v': return '%v'; // default
+      case 't': return '%t'; // boolean
+      case 'x': return '%x'; // hex
+      default: return '%v';  // fallback
+    }
+  }
+
+  // Try to determine the type from the actual variable declaration
+  const varType = findVariableType(variable.name, document);
+  if (varType) {
+    switch (varType) {
+      case 'int':
+      case 'int8':
+      case 'int16':
+      case 'int32':
+      case 'int64':
+      case 'uint':
+      case 'uint8':
+      case 'uint16':
+      case 'uint32':
+      case 'uint64':
+        return '%d';
+      
+      case 'float32':
+      case 'float64':
+        return '%f';
+      
+      case 'string':
+        return '%s';
+      
+      case 'bool':
+        return '%t';
+      
+      default:
+        if (varType.startsWith('map') || varType.startsWith('[]') || 
+            varType.startsWith('chan') || varType.startsWith('struct') ||
+            varType.startsWith('interface')) {
+          return '%v';
+        }
+        return '%v';
+    }
+  }
+
+  // Fall back to %v when type can't be determined
+  return '%v';
+}
+
+// Find the variable's type by analyzing the code
+function findVariableType(variableName: string, document: vscode.TextDocument): string | null {
+  const text = document.getText();
+  
+  // Try different declaration patterns
+  
+  // Pattern 1: Explicit type declaration (var name type = value)
+  const explicitPattern = new RegExp(
+    `var\\s+${variableName}\\s+(\\w+(?:\\[\\]\\w+)?)\\s*=`, 'i'
+  );
+  let match = explicitPattern.exec(text);
+  if (match) {
+    return match[1];
+  }
+  
+  // Pattern 2: Short declaration with literal (name := value)
+  const shortDeclPattern = new RegExp(
+    `${variableName}\\s*:=\\s*(.+?)(?:\\s|\\)|\\}|,|;|$)`, 'i'
+  );
+  match = shortDeclPattern.exec(text);
+  if (match) {
+    const value = match[1].trim();
+    
+    // Check the value type
+    if (value === 'true' || value === 'false') {
+      return 'bool';
+    }
+    
+    if (/^-?\d+$/.test(value)) {
+      return 'int';
+    }
+    
+    if (/^-?\d+\.\d+$/.test(value)) {
+      return 'float64';
+    }
+    
+    if (/^".*"$/.test(value) || /^`.*`$/.test(value)) {
+      return 'string';
+    }
+    
+    if (value.startsWith('[]')) {
+      return value; // Return array type e.g. []string
+    }
+    
+    if (value.startsWith('map[')) {
+      return value; // Return map type e.g. map[string]int
+    }
+  }
+  
+  // Pattern 3: Look for explicit type declaration with := from function call
+  const funcDeclPattern = new RegExp(
+    `${variableName}(?:\\s*,\\s*\\w+)*\\s*:=\\s*(\\w+)\\(`, 'i'
+  );
+  match = funcDeclPattern.exec(text);
+  if (match) {
+    // Return a best guess based on function name
+    const funcName = match[1].toLowerCase();
+    if (funcName.includes('bool')) {
+      return 'bool';
+    }
+    if (funcName.includes('int')) {
+      return 'int';
+    }
+    if (funcName.includes('float')) {
+      return 'float64';
+    }
+    if (funcName.includes('str')) {
+      return 'string';
+    }
+  }
+  
+  return null;
+}
+
+function generateSprintfStatement(parsedComment: ParsedFstring, document: vscode.TextDocument): string {
+  // Replace {var} or {var:type} with appropriate format specifier
+  let formatString = parsedComment.template;
+  const variableNames: string[] = [];
+  
+  // First pass to collect variable names
+  parsedComment.variables.forEach(variable => {
+    variableNames.push(variable.name);
+  });
+  
+  // Second pass to replace with format specifiers
+  formatString = formatString.replace(/{([^{}]+)(?::([a-z]))?}/g, (match, varName, typeHint) => {
+    const variable = { name: varName.trim(), typeHint: typeHint || null };
+    return determineFormatSpecifier(variable, document);
+  });
 
   // Create the full statement
-  return `${parsedComment.varName} ${
-    parsedComment.assignmentOp
-  } fmt.Sprintf("${formatString}", ${parsedComment.variables.join(", ")})`;
+  return `${parsedComment.varName} ${parsedComment.assignmentOp} fmt.Sprintf("${formatString}", ${variableNames.join(", ")})`;
 }
 
 function updateOrInsertGeneratedLine(

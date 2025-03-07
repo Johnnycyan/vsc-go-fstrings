@@ -2,7 +2,7 @@
 
 A VS Code extension that brings Python-like f-string syntax to Go through special comments.
 
-[Example.webm](https://github.com/user-attachments/assets/35f60122-e8cd-439f-9881-0c312e2c0f9e)
+![Example](https://github.com/user-attachments/assets/c0113533-dfff-4b60-8c74-f0ee4e298ce1)
 
 ## Features
 

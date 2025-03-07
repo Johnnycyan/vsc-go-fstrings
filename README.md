@@ -2,6 +2,8 @@
 
 A VS Code extension that brings Python-like f-string syntax to Go through special comments.
 
+[Code_jg86PEhB1y.webm](https://github.com/user-attachments/assets/35f60122-e8cd-439f-9881-0c312e2c0f9e)
+
 ## Features
 
 This extension allows you to write string formatting in Go using a more concise, Python-inspired f-string syntax. It automatically converts special comments into equivalent `fmt.Sprintf` statements.

@@ -152,12 +152,18 @@ function parseFstringComment(commentText: string): ParsedFstring | null {
 
   const [, varName, assignmentOp, , template] = match;
 
-  // Extract variables inside curly braces
+  // Extract variables inside curly braces, but ignore escaped ones
   const variables: { name: string; typeHint: string | null }[] = [];
+  
+  // First, replace escaped braces with temporary markers
+  let processedTemplate = template.replace(/\\{/g, "##ESCAPED_OPEN_BRACE##");
+  processedTemplate = processedTemplate.replace(/\\}/g, "##ESCAPED_CLOSE_BRACE##");
+
+  // Now extract actual variables using the processed template
   const variableRegex = /{([^{}:]+)(?::([a-z]))?}/g;
   let varMatch;
 
-  while ((varMatch = variableRegex.exec(template)) !== null) {
+  while ((varMatch = variableRegex.exec(processedTemplate)) !== null) {
     variables.push({
       name: varMatch[1].trim(),
       typeHint: varMatch[2] || null, // Extract type hint if provided
@@ -359,7 +365,8 @@ function generateSprintfStatement(
   parsedComment: ParsedFstring,
   document: vscode.TextDocument
 ): string {
-  // Replace {var} or {var:type} with appropriate format specifier
+  // Replace {var} or {var:type} with appropriate format specifier,
+  // but preserve \{var} as literal {var}
   let formatString = parsedComment.template;
   const variableNames: string[] = [];
 
@@ -367,6 +374,10 @@ function generateSprintfStatement(
   parsedComment.variables.forEach((variable) => {
     variableNames.push(variable.name);
   });
+
+  // Handle escaped braces first - replace \{ with a temporary marker
+  formatString = formatString.replace(/\\{/g, "##ESCAPED_OPEN_BRACE##");
+  formatString = formatString.replace(/\\}/g, "##ESCAPED_CLOSE_BRACE##");
 
   // Second pass to replace with format specifiers
   formatString = formatString.replace(
@@ -376,6 +387,10 @@ function generateSprintfStatement(
       return determineFormatSpecifier(variable, document);
     }
   );
+
+  // Restore the escaped braces
+  formatString = formatString.replace(/##ESCAPED_OPEN_BRACE##/g, "{");
+  formatString = formatString.replace(/##ESCAPED_CLOSE_BRACE##/g, "}");
 
   // Create the full statement
   return `${parsedComment.varName} ${

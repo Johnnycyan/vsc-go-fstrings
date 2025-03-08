@@ -31,14 +31,6 @@ function processGoDocument(
   document: vscode.TextDocument,
   changes: readonly vscode.TextDocumentContentChangeEvent[]
 ) {
-  // Skip processing if changes are likely from undo/redo operations
-  if (changes.length > 0) {
-    // Check if this appears to be an undo/redo operation
-    if (isLikelyUndoRedo(changes)) {
-      return;
-    }
-  }
-
   // Process document
   const edit = new vscode.WorkspaceEdit();
 
@@ -62,32 +54,6 @@ function processGoDocument(
   if (edit.size > 0) {
     vscode.workspace.applyEdit(edit);
   }
-}
-
-// Helper function to detect likely undo/redo operations
-function isLikelyUndoRedo(
-  changes: readonly vscode.TextDocumentContentChangeEvent[]
-): boolean {
-  // Undo/redo operations often have multiple changes in a single event
-  if (changes.length > 1) {
-    return true;
-  }
-
-  // If there's a single large change that replaces significant content,
-  // it's likely an undo/redo
-  if (changes.length === 1) {
-    const change = changes[0];
-    // Check if the change is replacing content (likely undo/redo)
-    if (
-      change.range &&
-      (change.range.start.line !== change.range.end.line ||
-        change.range.start.character !== change.range.end.character)
-    ) {
-      return true;
-    }
-  }
-
-  return false;
 }
 
 function handleFstringComment(
@@ -124,6 +90,7 @@ interface ParsedFstring {
   varName: string;
   assignmentOp: string; // ":=" or "="
   template: string;
+  quoteType: string; // Store the quote type (", ', or `)
   variables: { name: string; typeHint: string | null }[];
 }
 
@@ -145,19 +112,23 @@ function parseFstringComment(commentText: string): ParsedFstring | null {
   }
 
   // Match pattern: varName := "template with {vars}" or varName = "template with {vars}"
-  const match = content.match(/^(\w+)\s*((:=)|=)\s*"(.+)"$/);
+  // Extended to support single quotes and backticks
+  const match = content.match(/^(\w+)\s*((:=)|=)\s*(["'`])(.+?)\4$/);
   if (!match) {
     return null;
   }
 
-  const [, varName, assignmentOp, , template] = match;
+  const [, varName, assignmentOp, , quoteType, template] = match;
 
   // Extract variables inside curly braces, but ignore escaped ones
   const variables: { name: string; typeHint: string | null }[] = [];
-  
+
   // First, replace escaped braces with temporary markers
   let processedTemplate = template.replace(/\\{/g, "##ESCAPED_OPEN_BRACE##");
-  processedTemplate = processedTemplate.replace(/\\}/g, "##ESCAPED_CLOSE_BRACE##");
+  processedTemplate = processedTemplate.replace(
+    /\\}/g,
+    "##ESCAPED_CLOSE_BRACE##"
+  );
 
   // Now extract actual variables using the processed template
   const variableRegex = /{([^{}:]+)(?::([a-z]))?}/g;
@@ -174,6 +145,7 @@ function parseFstringComment(commentText: string): ParsedFstring | null {
     varName,
     assignmentOp,
     template,
+    quoteType, // Include the quote type
     variables,
   };
 }
@@ -370,6 +342,9 @@ function generateSprintfStatement(
   let formatString = parsedComment.template;
   const variableNames: string[] = [];
 
+  // Determine the quote type used in the input
+  const quoteType = parsedComment.quoteType || '"';
+
   // First pass to collect variable names
   parsedComment.variables.forEach((variable) => {
     variableNames.push(variable.name);
@@ -379,23 +354,51 @@ function generateSprintfStatement(
   formatString = formatString.replace(/\\{/g, "##ESCAPED_OPEN_BRACE##");
   formatString = formatString.replace(/\\}/g, "##ESCAPED_CLOSE_BRACE##");
 
-  // Second pass to replace with format specifiers
-  formatString = formatString.replace(
-    /{([^{}]+)(?::([a-z]))?}/g,
-    (match, varName, typeHint) => {
-      const variable = { name: varName.trim(), typeHint: typeHint || null };
-      return determineFormatSpecifier(variable, document);
-    }
-  );
+  // Track positions of variables in the format string to replace them with specifiers
+  const variablePositions: { 
+    start: number; 
+    end: number; 
+    variable: { name: string; typeHint: string | null }; 
+  }[] = [];
+
+  // Get positions of all variables in the template
+  let varMatch;
+  const regex = /{([^{}:]+)(?::([a-z]))?}/g;
+  let processedTemplate = formatString;
+  
+  while ((varMatch = regex.exec(processedTemplate)) !== null) {
+    const fullMatch = varMatch[0];
+    const name = varMatch[1].trim();
+    const typeHint = varMatch[2] || null;
+    
+    variablePositions.push({ 
+      start: varMatch.index, 
+      end: varMatch.index + fullMatch.length,
+      variable: { name, typeHint }
+    });
+  }
+
+  // Replace variables with format specifiers, starting from the end to avoid index shifting
+  for (let i = variablePositions.length - 1; i >= 0; i--) {
+    const pos = variablePositions[i];
+    const formatSpecifier = determineFormatSpecifier(pos.variable, document);
+    
+    formatString = 
+      formatString.substring(0, pos.start) + 
+      formatSpecifier + 
+      formatString.substring(pos.end);
+  }
 
   // Restore the escaped braces
   formatString = formatString.replace(/##ESCAPED_OPEN_BRACE##/g, "{");
   formatString = formatString.replace(/##ESCAPED_CLOSE_BRACE##/g, "}");
 
-  // Create the full statement
+  // Create the full statement using the same quote type as the input
   return `${parsedComment.varName} ${
     parsedComment.assignmentOp
-  } fmt.Sprintf("${formatString}", ${variableNames.join(", ")})`;
+  } fmt.Sprintf(${quoteType}${formatString}${quoteType}, ${variableNames.join(
+    ", "
+  )})`;
 }
 
 function updateOrInsertGeneratedLine(

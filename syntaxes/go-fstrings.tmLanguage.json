@@ -36,6 +36,48 @@
           }
         }
       ]
+    },
+    {
+      "begin": "((?<=^\\s*//\\s*(?:fs|fstring)\\b.*)')",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.string.begin.go" }
+      },
+      "end": "('|$)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.go" }
+      },
+      "contentName": "string.quoted.single.go",
+      "patterns": [
+        {
+          "match": "({)([^{}]*)(})",
+          "captures": {
+            "1": { "name": "punctuation.definition.template-expression.begin.go" },
+            "2": { "name": "entity.name.type.go" },
+            "3": { "name": "punctuation.definition.template-expression.end.go" }
+          }
+        }
+      ]
+    },
+    {
+      "begin": "((?<=^\\s*//\\s*(?:fs|fstring)\\b.*)(`|`))",
+      "beginCaptures": {
+        "1": { "name": "punctuation.definition.string.begin.go" }
+      },
+      "end": "(`|$)",
+      "endCaptures": {
+        "1": { "name": "punctuation.definition.string.end.go" }
+      },
+      "contentName": "string.quoted.raw.go",
+      "patterns": [
+        {
+          "match": "({)([^{}]*)(})",
+          "captures": {
+            "1": { "name": "punctuation.definition.template-expression.begin.go" },
+            "2": { "name": "entity.name.type.go" },
+            "3": { "name": "punctuation.definition.template-expression.end.go" }
+          }
+        }
+      ]
     }
   ]
 }

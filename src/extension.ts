@@ -1,5 +1,10 @@
 import * as vscode from "vscode";
 
+let isApplyingEdit = false;
+let lastProcessedVersions = new Map<string, number>();
+let debounceTimers = new Map<string, NodeJS.Timeout>();
+const DEBOUNCE_DELAY = 300; // ms
+
 export function activate(context: vscode.ExtensionContext) {
   console.log("Go fstrings extension activated");
 
@@ -17,10 +22,24 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  // Register document change listeners
+  // Register document change listeners with debounce
   const changeListener = vscode.workspace.onDidChangeTextDocument((event) => {
-    if (event.document.languageId === "go") {
-      processGoDocument(event.document, event.contentChanges);
+    if (event.document.languageId === "go" && !isApplyingEdit) {
+      const documentUri = event.document.uri.toString();
+
+      // Clear any existing timer for this document
+      if (debounceTimers.has(documentUri)) {
+        clearTimeout(debounceTimers.get(documentUri));
+      }
+
+      // Set new timer
+      debounceTimers.set(
+        documentUri,
+        setTimeout(() => {
+          processGoDocument(event.document, event.contentChanges);
+          debounceTimers.delete(documentUri);
+        }, DEBOUNCE_DELAY)
+      );
     }
   });
 
@@ -31,8 +50,20 @@ function processGoDocument(
   document: vscode.TextDocument,
   changes: readonly vscode.TextDocumentContentChangeEvent[]
 ) {
+  const documentUri = document.uri.toString();
+  const currentVersion = document.version;
+
+  // Skip if we've already processed this version
+  if (lastProcessedVersions.get(documentUri) === currentVersion) {
+    return;
+  }
+
+  // Update the last processed version
+  lastProcessedVersions.set(documentUri, currentVersion);
+
   // Process document
   const edit = new vscode.WorkspaceEdit();
+  let hasChanges = false;
 
   // Go through each line in the document
   for (let i = 0; i < document.lineCount; i++) {
@@ -46,13 +77,21 @@ function processGoDocument(
       text.startsWith("// fs ") ||
       text.startsWith("//fs ")
     ) {
-      handleFstringComment(line, i, document, edit);
+      if (handleFstringComment(line, i, document, edit)) {
+        hasChanges = true;
+      }
     }
   }
 
   // Apply the edits
-  if (edit.size > 0) {
-    vscode.workspace.applyEdit(edit);
+  if (hasChanges && edit.size > 0) {
+    isApplyingEdit = true;
+    vscode.workspace.applyEdit(edit).then(() => {
+      // Reset the flag after the edit is applied
+      setTimeout(() => {
+        isApplyingEdit = false;
+      }, 10);
+    });
   }
 }
 
@@ -61,10 +100,10 @@ function handleFstringComment(
   lineIndex: number,
   document: vscode.TextDocument,
   edit: vscode.WorkspaceEdit
-) {
+): boolean {
   const parsedComment = parseFstringComment(line.text.trim());
   if (!parsedComment) {
-    return;
+    return false;
   }
 
   // Get the indentation of the original line
@@ -76,13 +115,13 @@ function handleFstringComment(
   // Pass document to generateSprintfStatement
   const generatedCode = generateSprintfStatement(parsedComment, document);
 
-  updateOrInsertGeneratedLine(
+  return updateOrInsertGeneratedLine(
     parsedComment,
     generatedCode,
     lineIndex,
     document,
     edit,
-    indentation // Pass indentation to the function
+    indentation
   );
 }
 
@@ -355,26 +394,26 @@ function generateSprintfStatement(
   formatString = formatString.replace(/\\}/g, "##ESCAPED_CLOSE_BRACE##");
 
   // Track positions of variables in the format string to replace them with specifiers
-  const variablePositions: { 
-    start: number; 
-    end: number; 
-    variable: { name: string; typeHint: string | null }; 
+  const variablePositions: {
+    start: number;
+    end: number;
+    variable: { name: string; typeHint: string | null };
   }[] = [];
 
   // Get positions of all variables in the template
   let varMatch;
   const regex = /{([^{}:]+)(?::([a-z]))?}/g;
   let processedTemplate = formatString;
-  
+
   while ((varMatch = regex.exec(processedTemplate)) !== null) {
     const fullMatch = varMatch[0];
     const name = varMatch[1].trim();
     const typeHint = varMatch[2] || null;
-    
-    variablePositions.push({ 
-      start: varMatch.index, 
+
+    variablePositions.push({
+      start: varMatch.index,
       end: varMatch.index + fullMatch.length,
-      variable: { name, typeHint }
+      variable: { name, typeHint },
     });
   }
 
@@ -382,10 +421,10 @@ function generateSprintfStatement(
   for (let i = variablePositions.length - 1; i >= 0; i--) {
     const pos = variablePositions[i];
     const formatSpecifier = determineFormatSpecifier(pos.variable, document);
-    
-    formatString = 
-      formatString.substring(0, pos.start) + 
-      formatSpecifier + 
+
+    formatString =
+      formatString.substring(0, pos.start) +
+      formatSpecifier +
       formatString.substring(pos.end);
   }
 
@@ -407,55 +446,66 @@ function updateOrInsertGeneratedLine(
   lineIndex: number,
   document: vscode.TextDocument,
   edit: vscode.WorkspaceEdit,
-  indentation: string = "" // Default to empty string if not provided
-) {
+  indentation: string = ""
+): boolean {
+  let madeChanges = false;
+
   // First ensure that fmt is imported
-  ensureFmtImport(document, edit);
+  madeChanges = ensureFmtImport(document, edit) || madeChanges;
   const nextLineIndex = lineIndex + 1;
 
   // Check if we need to insert or replace
   if (nextLineIndex < document.lineCount) {
     const nextLine = document.lineAt(nextLineIndex);
+    const expectedCodeWithIndent = indentation + generatedCode;
 
-    // If next line contains a generated statement for the same variable, replace it
+    // If next line contains a generated statement for the same variable
     if (
       nextLine.text
         .trim()
         .startsWith(parsedComment.varName + " " + parsedComment.assignmentOp)
     ) {
-      edit.replace(document.uri, nextLine.range, indentation + generatedCode);
-      return;
+      // Only replace if the code is different
+      if (nextLine.text !== expectedCodeWithIndent) {
+        edit.replace(document.uri, nextLine.range, expectedCodeWithIndent);
+        madeChanges = true;
+      }
+      return madeChanges;
     }
   }
 
-  function ensureFmtImport(
-    document: vscode.TextDocument,
-    edit: vscode.WorkspaceEdit
-  ) {
-    // Check if fmt is already imported
-    const text = document.getText();
+  // No existing line to update, insert a new one
+  const position = new vscode.Position(lineIndex + 1, 0);
+  edit.insert(document.uri, position, indentation + generatedCode + "\n");
+  madeChanges = true;
 
-    // Simple import check (could be more sophisticated)
-    if (
-      !/import\s+\(\s*[\s\S]*?["']fmt["'][\s\S]*?\)/m.test(text) &&
-      !/import\s+["']fmt["']/m.test(text)
-    ) {
-      // Find the position to insert the import
-      for (let i = 0; i < document.lineCount; i++) {
-        const line = document.lineAt(i).text.trim();
-        if (line.startsWith("package ")) {
-          // Insert after package line
-          const position = new vscode.Position(i + 1, 0);
-          edit.insert(document.uri, position, '\nimport "fmt"\n');
-          break;
-        }
+  return madeChanges;
+}
+
+function ensureFmtImport(
+  document: vscode.TextDocument,
+  edit: vscode.WorkspaceEdit
+): boolean {
+  // Check if fmt is already imported
+  const text = document.getText();
+
+  // Simple import check (could be more sophisticated)
+  if (
+    !/import\s+\(\s*[\s\S]*?["']fmt["'][\s\S]*?\)/m.test(text) &&
+    !/import\s+["']fmt["']/m.test(text)
+  ) {
+    // Find the position to insert the import
+    for (let i = 0; i < document.lineCount; i++) {
+      const line = document.lineAt(i).text.trim();
+      if (line.startsWith("package ")) {
+        // Insert after package line
+        const position = new vscode.Position(i + 1, 0);
+        edit.insert(document.uri, position, '\nimport "fmt"\n');
+        return true;
       }
     }
   }
-
-  // Otherwise insert a new line
-  const position = new vscode.Position(lineIndex + 1, 0);
-  edit.insert(document.uri, position, indentation + generatedCode + "\n");
+  return false;
 }
 
 export function deactivate() {}
